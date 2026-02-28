@@ -16,9 +16,19 @@
   - Variable compass angles with human-like imprecision
   - Improved NPC/object detection with retry logic
   - BioHash-driven randomness for per-account behavioral fingerprinting
+  - Position caching for expensive Map.Position calls (Caching tutorial)
+  - Named constants for all coordinates and thresholds (Lape Syntax tutorial)
+  - Timed progress logging per section (Debugging tutorial)
+  - Built-in door handler for reliable traversal (Walker and Doors tutorial)
 
   Based on the WaspQuests framework patterns and Tutorial Island quest data.
   Uses the sequential step system from WaspQuests with custom completion handlers.
+
+  Efficiency techniques applied from waspscripts.com tutorials:
+  - Tutorial #6  (Lape Syntax): Constants, naming conventions
+  - Tutorial #11 (Caching): Position caching, tick count timing
+  - Tutorial #16 (Debugging): WriteLn progress tracking with timing
+  - Tutorial #25 (Walker and Doors): DoorHandler enabled
 *)
 
 {$I WaspQuests/osr.simba}
@@ -27,9 +37,87 @@
 {$ENDIF}
 
 // ============================================================================
+// Constants (Tutorial #6: Lape Syntax - named constants over magic numbers)
+// ============================================================================
+
+const
+  // -- Map Coordinates (Surface) --
+  TILE_FISHING_SPOT:    TPoint = [8308, 38058];
+  TILE_FISHING_CLICK:   TPoint = [8308, 38062];
+  TILE_TREE_WALK:       TPoint = [8324, 38042];
+  TILE_TREE_CLICK:      TPoint = [8324, 38034];
+  TILE_BANK:            TPoint = [8384, 37938];
+  TILE_POLL_BOOTH:      TPoint = [8380, 37946];
+  TILE_DOOR:            TPoint = [8392, 38022];
+  TILE_PAST_DOOR:       TPoint = [8400, 38026];
+  TILE_MAGIC_INSTRUCTOR:TPoint = [8468, 38074];
+  TILE_MAGIC_CAGE:      TPoint = [8464, 38066];
+
+  // -- Map Coordinates (Dungeon) --
+  TILE_RAT_CAGE:        TPoint = [2684, 322];
+  TILE_LADDER_UP:       TPoint = [2720, 310];
+
+  // -- Timing Thresholds (ms) --
+  WAIT_ITEM_TIMEOUT:    Int32 = 12000;
+  WAIT_INTERFACE_TIMEOUT: Int32 = 5000;
+  WAIT_SHORT_TIMEOUT:   Int32 = 6000;
+  WAIT_FISH_TIMEOUT:    Int32 = 10000;
+  WAIT_DOOR_TIMEOUT:    Int32 = 8000;
+
+  // -- Retry Limits --
+  MAX_COOK_RETRIES:     Int32 = 3;
+  MAX_SPELL_RETRIES:    Int32 = 7;
+
+  // -- Probability Thresholds --
+  CAMERA_JITTER_CHANCE: Double = 0.35;
+  TAB_CHECK_CHANCE:     Double = 0.15;
+  COMBAT_DELAY_CHANCE:  Double = 0.3;
+
+  // -- Door Position Range --
+  DOOR_ARRIVAL_RANGE:   Int32 = 3;
+
+// ============================================================================
+// Script Timer (Tutorial #11: Caching / Tutorial #16: Debugging)
+// ============================================================================
+
+var
+  ScriptStartTick: UInt64;
+  SectionStartTick: UInt64;
+  CachedPosition: TPoint;
+  CachedPositionTick: UInt64;
+
+const
+  POSITION_CACHE_TTL: UInt64 = 500; // cache position for 500ms before re-querying
+
+function GetCachedPosition(): TPoint;
+begin
+  if (GetTickCount - CachedPositionTick) > POSITION_CACHE_TTL then
+  begin
+    CachedPosition := Map.Position;
+    CachedPositionTick := GetTickCount;
+  end;
+  Result := CachedPosition;
+end;
+
+procedure LogSection(section: String);
+var
+  elapsed: UInt64;
+begin
+  elapsed := GetTickCount - SectionStartTick;
+  if SectionStartTick > 0 then
+    WriteLn('[Tutorial] Previous section completed in ', elapsed, 'ms');
+  SectionStartTick := GetTickCount;
+  WriteLn('[Tutorial] === ', section, ' === (', (GetTickCount - ScriptStartTick) div 1000, 's elapsed)');
+end;
+
+procedure LogStep(step: String);
+begin
+  WriteLn('[Tutorial]   > ', step);
+end;
+
+// ============================================================================
 // Randomness Helpers
 // ============================================================================
-// Human-like delay and behavioral variance functions
 
 procedure HumanPause();
 begin
@@ -55,13 +143,13 @@ end;
 
 procedure RandomCameraJitter();
 begin
-  if Random() < 0.35 then
+  if Random() < CAMERA_JITTER_CHANCE then
     Minimap.SetCompassAngle(Minimap.GetCompassAngle() + Random(-25, 25));
 end;
 
 procedure MaybeCheckTab();
 begin
-  if Random() < 0.15 then
+  if Random() < TAB_CHECK_CHANCE then
   begin
     Antiban.ToggleTab();
     Wait(200, 600, wdLeft);
@@ -74,20 +162,23 @@ end;
 
 function OpenInventoryTab(): Boolean;
 begin
+  LogStep('Opening inventory tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.INVENTORY, True);
 end;
 
 function FishAndOpenStats(): Boolean;
 begin
-  WaitUntil(Inventory.ContainsItem('Raw shrimps'), Random(30, 80), 10000);
+  LogStep('Waiting for shrimps then opening stats');
+  WaitUntil(Inventory.ContainsItem('Raw shrimps'), Random(30, 80), WAIT_FISH_TIMEOUT);
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.STATS, True);
 end;
 
 function WaitForLogs(): Boolean;
 begin
-  Result := WaitUntil(Inventory.ContainsItem('Logs'), Random(30, 80), 12000);
+  LogStep('Waiting for logs');
+  Result := WaitUntil(Inventory.ContainsItem('Logs'), Random(30, 80), WAIT_ITEM_TIMEOUT);
   Quest.steps[quest.index].coordinate := Map.Walker.Position();
   if Result then
     RandomCameraJitter();
@@ -97,59 +188,73 @@ function CookShrimpsOnFire(): Boolean;
 var
   attempts: Integer;
 begin
+  LogStep('Cooking shrimps on fire');
   attempts := 0;
   repeat
     HumanPause();
     Inventory.ClickItem('Raw shrimps');
     Wait(Random(150, 400));
     Map.ClickTile(Quest.steps[quest.index - 3].coordinate, '-> Fire');
-    Result := WaitUntil(Inventory.ContainsItem('Shrimps'), Random(30, 80), 12000);
+    Result := WaitUntil(Inventory.ContainsItem('Shrimps'), Random(30, 80), WAIT_ITEM_TIMEOUT);
     attempts += 1;
-    if not Result and (attempts < 3) then
+    if not Result and (attempts < MAX_COOK_RETRIES) then
+    begin
+      LogStep('Cook attempt ' + IntToStr(attempts) + ' failed, retrying...');
       Wait(Random(500, 1500));
-  until Result or (attempts >= 3);
+    end;
+  until Result or (attempts >= MAX_COOK_RETRIES);
+  if Result then
+    LogStep('Shrimps cooked successfully')
+  else
+    LogStep('WARNING: Failed to cook shrimps after ' + IntToStr(MAX_COOK_RETRIES) + ' attempts');
 end;
 
 function OpenQuestsTab(): Boolean;
 begin
+  LogStep('Opening quests tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.QUESTS, True);
 end;
 
 function WaitForTinOre(): Boolean;
 begin
-  Result := WaitUntil(Inventory.ContainsItem('Tin ore'), Random(30, 80), 12000);
+  LogStep('Mining tin ore');
+  Result := WaitUntil(Inventory.ContainsItem('Tin ore'), Random(30, 80), WAIT_ITEM_TIMEOUT);
   if Result then
     RandomCameraJitter();
 end;
 
 function WaitForCopperOre(): Boolean;
 begin
-  Result := WaitUntil(Inventory.ContainsItem('Copper ore'), Random(30, 80), 12000);
+  LogStep('Mining copper ore');
+  Result := WaitUntil(Inventory.ContainsItem('Copper ore'), Random(30, 80), WAIT_ITEM_TIMEOUT);
   if Result then
     RandomCameraJitter();
 end;
 
 function WaitForBronzeBar(): Boolean;
 begin
-  Result := WaitUntil(Inventory.ContainsItem('Bronze bar'), Random(30, 80), 12000);
+  LogStep('Smelting bronze bar');
+  Result := WaitUntil(Inventory.ContainsItem('Bronze bar'), Random(30, 80), WAIT_ITEM_TIMEOUT);
 end;
 
 function SmithBronzeDagger(): Boolean;
 begin
-  WaitUntil(RSInterface.IsOpen, Random(30, 80), 6000);
+  LogStep('Smithing bronze dagger');
+  WaitUntil(RSInterface.IsOpen, Random(30, 80), WAIT_SHORT_TIMEOUT);
   HumanPause();
   Anvil.SmithItem('Bronze dagger', ERSAnvilButton.QUANTITY_ALL);
-  Result := WaitUntil(Inventory.ContainsItem('Bronze dagger'), Random(30, 80), 12000);
+  Result := WaitUntil(Inventory.ContainsItem('Bronze dagger'), Random(30, 80), WAIT_ITEM_TIMEOUT);
 end;
 
 function EquipmentTabAndDagger(): Boolean;
 begin
+  LogStep('Opening equipment tab and equipping dagger');
   HumanPause();
   Gametabs.Open(ERSGameTab.EQUIPMENT, True);
   Wait(Random(300, 800));
   Equipment.GetButton(ERSEquipmentbutton.STATS).Click;
-  WaitUntil(RSInterface.IsOpen, Random(30, 80), 5000);
+  WaitUntil(RSInterface.IsOpen, Random(30, 80), WAIT_INTERFACE_TIMEOUT);
   Wait(Random(500, 1500), Random(1600, 2500), wdLeft);
   RSInterface.Close(False);
   Wait(Random(200, 600));
@@ -158,33 +263,37 @@ end;
 
 function OpenCombatTab(): Boolean;
 begin
+  LogStep('Opening combat tab');
   Wait(Random(800, 1500));
   Result := Gametabs.Open(ERSGameTab.COMBAT, True);
-  if Result and (Random() < 0.3) then
+  if Result and (Random() < COMBAT_DELAY_CHANCE) then
     Wait(Random(300, 900));
 end;
 
 function CloseInterface(): Boolean;
 begin
-  WaitUntil(RSInterface.IsOpen, Random(30, 80), 5000);
+  WaitUntil(RSInterface.IsOpen, Random(30, 80), WAIT_INTERFACE_TIMEOUT);
   HumanPause();
   Result := RSInterface.Close(False);
 end;
 
 function OpenAccountTab(): Boolean;
 begin
+  LogStep('Opening account tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.ACCOUNT, True);
 end;
 
 function OpenPrayerTab(): Boolean;
 begin
+  LogStep('Opening prayer tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.PRAYER, True);
 end;
 
 function OpenFriendsTab(): Boolean;
 begin
+  LogStep('Opening friends tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.FRIENDS, True);
 end;
@@ -197,11 +306,13 @@ end;
 
 function WaitForDoorTransition(): Boolean;
 begin
-  Result := WaitUntil(Map.Position.InRange([8392, 38022], 3), Random(30, 80), 8000);
+  LogStep('Waiting for door transition');
+  Result := WaitUntil(GetCachedPosition().InRange(TILE_DOOR, DOOR_ARRIVAL_RANGE), Random(30, 80), WAIT_DOOR_TIMEOUT);
 end;
 
 function OpenMagicTab(): Boolean;
 begin
+  LogStep('Opening magic tab');
   HumanPause();
   Result := Gametabs.Open(ERSGameTab.MAGIC, True);
 end;
@@ -214,11 +325,14 @@ var
   tpa: TPointArray;
   atpa: T2DPointArray;
   clickPoint: TPoint;
+  myPos: TPoint;
 begin
+  LogStep('Casting Wind Strike on chicken');
   tries := 0;
+  myPos := GetCachedPosition(); // Cache position once (Tutorial #11: Caching)
   npcArr := NPCs.getAll('Chicken');
-  npc := npcArr.findNearest(Map.Position);
-  while (tries < 7) and not Result do
+  npc := npcArr.findNearest(myPos);
+  while (tries < MAX_SPELL_RETRIES) and not Result do
   begin
     if not Magic.IsSelected(ERSSPell.WIND_STRIKE) then
     begin
@@ -241,17 +355,22 @@ begin
         Wait(Random(400, 900));
       end;
     end;
-    Tries += 1;
+    tries += 1;
     Wait(Random(300, 800));
     if (length(Chat.GetOptions) = 2) or (length(Chat.GetOptions) = 3) then
       Result := True;
   end;
+  if Result then
+    LogStep('Wind Strike cast successfully')
+  else
+    LogStep('WARNING: Failed to cast Wind Strike after ' + IntToStr(MAX_SPELL_RETRIES) + ' attempts');
 end;
 
 function RunSettingsSearcher1(): Boolean;
 var
   SettingsSearcher: TSettingsSearcher;
 begin
+  LogStep('Running pre-tutorial settings verification');
   SettingsSearcher.Run1();
   Exit(True);
 end;
@@ -260,6 +379,7 @@ function RunSettingsSearcher2(): Boolean;
 var
   SettingsSearcher: TSettingsSearcher;
 begin
+  LogStep('Running post-tutorial settings verification');
   SettingsSearcher.Run2();
   Exit(True);
 end;
@@ -275,38 +395,45 @@ end;
 
 procedure SurvivalToChefTransition();
 begin
+  LogSection('Master Chef (Bread Making)');
   SectionTransitionPause();
 end;
 
 procedure ChefToQuestGuideTransition();
 begin
+  LogSection('Quest Guide');
   SectionTransitionPause();
 end;
 
 procedure QuestGuideToDungeonTransition();
 begin
+  LogSection('Mining Instructor (Dungeon)');
   SectionTransitionPause();
   RandomCameraJitter();
 end;
 
 procedure MiningToCombatTransition();
 begin
+  LogSection('Combat Instructor');
   SectionTransitionPause();
 end;
 
 procedure CombatToSurfaceTransition();
 begin
+  LogSection('Account Guide (Banking)');
   SectionTransitionPause();
 end;
 
 procedure BankToPrayerTransition();
 begin
+  LogSection('Brother Brace (Prayer/Friends)');
   SectionTransitionPause();
   MaybeCheckTab();
 end;
 
 procedure PrayerToMagicTransition();
 begin
+  LogSection('Magic Instructor (Final)');
   SectionTransitionPause();
 end;
 
@@ -325,6 +452,9 @@ begin
   Quest.questInfo += 'Includes randomized delays and antiban behaviors';
   Quest.blockingAreas += [8459, 37998, 8520, 38038];
 
+  // Tutorial #25: Enable door handler for reliable door traversal
+  Map.Walker._DoorHandler.Enabled := True;
+
   // ---- Step 1: Settings Verification ----
   Quest.steps.AddCustomStep('Run Settings Searcher', @RunSettingsSearcher1);
 
@@ -337,14 +467,14 @@ begin
   Quest.steps.AddConversationStep('Conversation Survival Expert', [], @OpenInventoryTab);
 
   // Fish shrimps
-  Quest.steps.AddWalkStep('Walk to fishing spot', [8308, 38058]);
-  Quest.steps.AddClickTileStep('Click fishing spot', [8308, 38062], 'Net', @FishAndOpenStats);
+  Quest.steps.AddWalkStep('Walk to fishing spot', TILE_FISHING_SPOT);
+  Quest.steps.AddClickTileStep('Click fishing spot', TILE_FISHING_CLICK, 'Net', @FishAndOpenStats);
 
   // Get tinderbox, chop tree, light fire, cook
   Quest.steps.AddTalkToStep('Talk to Survival Expert 2', 'Survival Expert');
   Quest.steps.AddConversationStep('Conversation Survival Expert 2', []);
-  Quest.steps.AddWalkStep('Walk to tree', [8324, 38042], nil, @RotateNorthish);
-  Quest.steps.AddClickTileStep('Click tree', [8324, 38034], 'Chop', @WaitForLogs);
+  Quest.steps.AddWalkStep('Walk to tree', TILE_TREE_WALK, nil, @RotateNorthish);
+  Quest.steps.AddClickTileStep('Click tree', TILE_TREE_CLICK, 'Chop', @WaitForLogs);
   Quest.steps.AddCombineStep('Light fire', 'Tinderbox', 'Logs');
   Quest.steps.AddWaitStep('Wait for fire to burn', 5000 + Random(2000));
   Quest.steps.AddCustomStep('Click shrimps on fire', @CookShrimpsOnFire);
@@ -383,7 +513,7 @@ begin
   Quest.steps.AddInteractInventoryStep('click shield', 'Wooden shield', 'Wield', @OpenCombatTab);
 
   // Melee combat
-  Quest.steps.AddWalkStep('Walk in cage', [2684, 322]);
+  Quest.steps.AddWalkStep('Walk in cage', TILE_RAT_CAGE);
   Quest.steps.AddKillStep('Kill rat', 'Giant rat', 3000 + Random(2000), True);
 
   // Ranged combat
@@ -394,11 +524,11 @@ begin
   Quest.steps.AddKillStep('Kill rat', 'Giant rat', 5000 + Random(2000), False);
 
   // ---- Section: Account Guide (Banking) ----
-  Quest.steps.AddInteractObjectStep('Click ladder', 'Ladder', 'Climb-up', True, [2720, 310], nil, @CombatToSurfaceTransition);
+  Quest.steps.AddInteractObjectStep('Click ladder', 'Ladder', 'Climb-up', True, TILE_LADDER_UP, nil, @CombatToSurfaceTransition);
   Quest.steps.AddWaitStep('Wait until upstairs', 2500 + Random(1500));
-  Quest.steps.AddWalkStep('Walk to bank', [8384, 37938]);
+  Quest.steps.AddWalkStep('Walk to bank', TILE_BANK);
   Quest.steps.AddTalkToStep('Talk to banker', 'Banker', False, [0,0], @CloseInterface);
-  Quest.steps.AddClickTileStep('Click poll booth', [8380, 37946], 'Use');
+  Quest.steps.AddClickTileStep('Click poll booth', TILE_POLL_BOOTH, 'Use');
   Quest.steps.AddWaitStep('wait lil bit', 800 + Random(700));
   Quest.steps.AddConversationStep('Conversation poll booth', [], @CloseInterface);
   Quest.steps.AddTalkToStep('Talk to Account Guide', 'Account Guide');
@@ -415,18 +545,18 @@ begin
   Quest.steps.AddConversationStep('Conversation Brother Brace 3', [], @RotateSouth);
 
   // Navigate through door to magic area
-  Quest.steps.AddClickTileStep('click door', [8392, 38022], 'Open', @WaitForDoorTransition);
-  Quest.steps.AddClickTileStep('move away from door', [8400, 38026], '', nil, @PrayerToMagicTransition);
+  Quest.steps.AddClickTileStep('click door', TILE_DOOR, 'Open', @WaitForDoorTransition);
+  Quest.steps.AddClickTileStep('move away from door', TILE_PAST_DOOR, '', nil, @PrayerToMagicTransition);
 
   // ---- Section: Magic Instructor (Final Section) ----
-  Quest.steps.AddWalkStep('Walk to magic dude', [8468, 38074]);
+  Quest.steps.AddWalkStep('Walk to magic dude', TILE_MAGIC_INSTRUCTOR);
   Quest.steps.AddTalkToStep('Talk to magic dude', 'Magic Instructor');
   Quest.steps.AddConversationStep('Conversation Magic dude', [], @OpenMagicTab);
   Quest.steps.AddTalkToStep('Talk to magic dude 2', 'Magic Instructor');
   Quest.steps.AddConversationStep('Conversation Magic dude 2', []);
 
   // Cast Wind Strike on chicken
-  Quest.steps.AddWalkStep('Walk to cage', [8464, 38066]);
+  Quest.steps.AddWalkStep('Walk to cage', TILE_MAGIC_CAGE);
   Quest.steps.AddCustomStep('cast spell on chicken', @CastWindStrikeOnChicken);
 
   // Final conversation - teleport to mainland
@@ -444,7 +574,20 @@ end;
 // ============================================================================
 
 begin
+  ScriptStartTick := GetTickCount;
+  SectionStartTick := 0;
+  CachedPositionTick := 0;
+
+  WriteLn('[Tutorial] ========================================');
+  WriteLn('[Tutorial] WaspTutorial - Tutorial Island Completer');
+  WriteLn('[Tutorial] ========================================');
+  LogSection('Gielinor Guide (Start)');
+
   QuestArray.AddQuest('Tutorial Island', @SetupTutorialIsland);
   Quest := QuestArray[0];
   Quest.Run(0, 0);
+
+  WriteLn('[Tutorial] ========================================');
+  WriteLn('[Tutorial] Tutorial Island completed in ', (GetTickCount - ScriptStartTick) div 1000, ' seconds');
+  WriteLn('[Tutorial] ========================================');
 end.
