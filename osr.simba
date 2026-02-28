@@ -1,0 +1,30 @@
+(*
+  WaspTutorial - Local Include Chain
+  ===================================
+  Standalone include chain for Tutorial Island.
+  Replaces {$I WaspQuests/osr.simba} with local backend files.
+
+  Dependencies:
+  - SRL-T (Simba package)
+  - WaspLib (Simba package)
+  - WaspQuests webgraph data files (installed package, data only)
+*)
+
+{$IFNDEF SRL_OSR} {$I SRL-T/osr.simba} {$ENDIF}
+{$IFNDEF WL_OSR} {$I WaspLib/osr.simba} {$ENDIF}
+
+{$DEFINE WQ_OSR}
+
+{$IFNDEF WT_TYPES}     {$I backend/types.simba}
+{$IFNDEF WT_LADDERS}   {$I backend/ladders.simba}
+{$IFNDEF WT_OVERRIDES} {$I backend/overrides.simba}
+{$IFNDEF WT_SETUPSTEPS}  {$I backend/setupSteps.simba}
+{$IFNDEF WT_SOLVESTEPS}  {$I backend/solveSteps.simba}
+{$IFNDEF WT_ENGINE}    {$I backend/questEngine.simba}
+
+{$ELSE}{$ENDIF}
+{$ELSE}{$ENDIF}
+{$ELSE}{$ENDIF}
+{$ELSE}{$ENDIF}
+{$ELSE}{$ENDIF}
+{$ELSE}{$ENDIF}

@@ -31,9 +31,9 @@
   - Tutorial #25 (Walker and Doors): DoorHandler enabled
 *)
 
-{$I WaspQuests/osr.simba}
+{$I osr.simba}
 {$IFNDEF WQ_SETTINGSSEARCHER_INCLUDED}
-  {$I WaspQuests/resources/settings_searcher.simba}
+  {$I resources/settings_searcher.simba}
 {$ENDIF}
 
 // ============================================================================
