@@ -11,7 +11,17 @@ begin
   if step.NPC_target.Coordinates = [] then
   begin
     npcArr := NPCs.GetAll(step.NPC_name);
+    if Length(npcArr) = 0 then
+    begin
+      WriteLn('[SolveTalkToStep] No NPCs found for: ', step.NPC_name);
+      Exit;
+    end;
     step.NPC_target := npcArr.findNearest(step.coordinate);
+    if step.NPC_target.Coordinates = [] then
+    begin
+      WriteLn('[SolveTalkToStep] findNearest returned no valid NPC for: ', step.NPC_name);
+      Exit;
+    end;
     //Debug(step.NPC_target);
     if step.colors = [] then
       step.NPC_target.Finder.Colors := [CTS2(3504679, 17, 2.17, 2.93)]
@@ -47,7 +57,17 @@ begin
   if step.NPC_target.Coordinates = [] then
   begin
     npcArr := NPCs.GetAll(step.NPC_name);
+    if Length(npcArr) = 0 then
+    begin
+      WriteLn('[SolveKillStep] No NPCs found for: ', step.NPC_name);
+      Exit;
+    end;
     step.NPC_target := npcArr.findNearest(step.coordinate);
+    if step.NPC_target.Coordinates = [] then
+    begin
+      WriteLn('[SolveKillStep] findNearest returned no valid NPC for: ', step.NPC_name);
+      Exit;
+    end;
     //Debug(step.NPC_target);
     if step.colors = [] then
       step.NPC_target.Finder.Colors := [CTS2(3504679, 17, 2.17, 2.93)]
