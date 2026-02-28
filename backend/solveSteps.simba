@@ -215,6 +215,11 @@ begin
         end;
         o := Chat.GetOptions();
         options := o.ToStringArray();
+        if Length(options) = 0 then
+        begin
+          WriteLn('[SolveConversationStep] No chat options found for: ', ToStr(i));
+          Continue;
+        end;
         str := ToStr(i);
         match := options.FindBestMatch(str, sim);
         ChatIndex := options.Find(match);
@@ -236,6 +241,11 @@ begin
         end;
         o := Chat.GetOptions();
         options := o.ToStringArray();
+        if Length(options) = 0 then
+        begin
+          WriteLn('[SolveConversationStep] No chat options found for: ', ToStr(i));
+          Continue;
+        end;
         str := ToStr(i);
         match := options.FindBestMatch(str, sim);
         ChatIndex := options.Find(match);
